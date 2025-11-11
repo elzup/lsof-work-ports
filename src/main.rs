@@ -1,36 +1,35 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use colored::*;
+use colored::Colorize;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::process::Command;
 use tabled::{Table, Tabled};
 
 #[derive(Parser)]
 #[command(name = "lsof-work-ports")]
-#[command(about = "プロセスに占有されているポートを管理するツール", long_about = None)]
+#[command(about = "Manage ports occupied by processes", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// 特定のポート番号でフィルタ
+    /// Filter by specific port number
     #[arg(short, long)]
     port: Option<u16>,
 
-    /// 特定のプロセス名でフィルタ
+    /// Filter by process name
     #[arg(short = 'n', long)]
     process: Option<String>,
 
-    /// すべてのポートを表示（デフォルトは監視対象のみ）
+    /// Show all ports (default: only monitored ports)
     #[arg(short, long)]
     all: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 設定ファイルの初期化
+    /// Initialize config file
     Init,
-    /// ポート情報の一覧表示
+    /// List port information
     List,
 }
 
@@ -50,11 +49,24 @@ struct PortInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
-    ports: HashMap<u16, PortConfig>,
+    #[serde(default)]
+    ports: Vec<PortEntry>,
+    #[serde(default)]
+    port_ranges: Vec<PortRange>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct PortConfig {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PortEntry {
+    port: u16,
+    name: String,
+    category: String,
+    priority: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PortRange {
+    start: u16,
+    end: u16,
     name: String,
     category: String,
     priority: u8,
@@ -62,53 +74,40 @@ struct PortConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        macro_rules! port {
-            ($port:expr, $name:expr, $cat:expr, $pri:expr) => {
-                (
-                    $port,
-                    PortConfig {
-                        name: $name.to_string(),
-                        category: $cat.to_string(),
-                        priority: $pri,
-                    },
-                )
-            };
-        }
-
-        let ports = HashMap::from([
-            // Frontend
-            port!(3000, "React Dev Server", "Frontend", 1),
-            port!(3001, "Next.js Dev", "Frontend", 1),
-            port!(5173, "Vite Dev Server", "Frontend", 1),
-            // Backend
-            port!(4000, "API Server", "Backend", 2),
-            port!(8000, "HTTP Server Alt", "Backend", 2),
-            port!(8080, "HTTP Server", "Backend", 2),
-            // Database
-            port!(3306, "MySQL", "Database", 3),
-            port!(5432, "PostgreSQL", "Database", 3),
-            port!(27017, "MongoDB", "Database", 3),
-            // Cache
-            port!(6379, "Redis", "Cache", 3),
-        ]);
-
-        Config {
-            ports,
-        }
+        const DEFAULT_CONFIG: &str = include_str!("../default-config.toml");
+        toml::from_str(DEFAULT_CONFIG).unwrap_or_else(|_| Self {
+            ports: Vec::new(),
+            port_ranges: Vec::new(),
+        })
     }
 }
 
 impl Config {
+    fn get_port_config(&self, port_num: u16) -> Option<(&str, u8)> {
+        // Check exact port match first
+        if let Some(port_entry) = self.ports.iter().find(|p| p.port == port_num) {
+            return Some((&port_entry.category, port_entry.priority));
+        }
+
+        // Check port ranges
+        self.port_ranges
+            .iter()
+            .find(|range| port_num >= range.start && port_num <= range.end)
+            .map(|range| (range.category.as_str(), range.priority))
+    }
+
+    fn is_monitored(&self, port_num: u16) -> bool {
+        self.get_port_config(port_num).is_some()
+    }
+
     fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
         if !config_path.exists() {
-            return Ok(Config::default());
+            return Ok(Self::default());
         }
 
-        let content =
-            std::fs::read_to_string(&config_path).context("設定ファイルの読み込みに失敗")?;
-        let config: Config = toml::from_str(&content).context("設定ファイルのパースに失敗")?;
-        Ok(config)
+        let content = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
+        toml::from_str(&content).context("Failed to parse config file")
     }
 
     fn save(&self) -> Result<()> {
@@ -117,13 +116,12 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
 
-        let content = toml::to_string_pretty(self).context("設定のシリアライズに失敗")?;
-        std::fs::write(&config_path, content).context("設定ファイルの書き込みに失敗")?;
-        Ok(())
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        std::fs::write(&config_path, content).context("Failed to write config file")
     }
 
     fn config_path() -> Result<std::path::PathBuf> {
-        let home = std::env::var("HOME").context("HOME環境変数が設定されていません")?;
+        let home = std::env::var("HOME").context("HOME environment variable not set")?;
         Ok(std::path::PathBuf::from(home)
             .join(".config")
             .join("lsof-work-ports")
@@ -133,94 +131,81 @@ impl Config {
 
 fn get_port_info() -> Result<Vec<PortInfo>> {
     let output = Command::new("lsof")
-        .args(&["-i", "-P", "-n"])
+        .args(["-i", "-P", "-n"])
         .output()
-        .context("lsofコマンドの実行に失敗")?;
+        .context("Failed to execute lsof command")?;
 
-    if !output.status.success() {
-        anyhow::bail!("lsofコマンドがエラーを返しました");
-    }
+    anyhow::ensure!(output.status.success(), "lsof command returned an error");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut port_infos = Vec::new();
 
-    for line in stdout.lines().skip(1) {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 9 {
-            continue;
-        }
+    Ok(stdout
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let parts: Vec<_> = line.split_whitespace().collect();
+            if parts.len() < 9 {
+                return None;
+            }
 
-        let process = parts[0];
-        let pid = parts[1];
-        let port_type = parts[7];
-        let name_field = parts[8];
-
-        // ポート番号を抽出
-        if let Some(port_str) = extract_port(name_field) {
-            port_infos.push(PortInfo {
-                port: port_str.to_string(),
-                process: process.to_string(),
-                pid: pid.to_string(),
-                port_type: port_type.to_string(),
-                category: "Unknown".to_string(),
-            });
-        }
-    }
-
-    Ok(port_infos)
+            extract_port(parts[8]).map(|port| PortInfo {
+                port: port.into(),
+                process: parts[0].into(),
+                pid: parts[1].into(),
+                port_type: parts[7].into(),
+                category: "Unknown".into(),
+            })
+        })
+        .collect())
 }
 
 fn extract_port(name_field: &str) -> Option<&str> {
-    // "*:8080" や "127.0.0.1:3000" のような形式からポート番号を抽出
     name_field.split(':').last()
 }
 
 fn enrich_with_config(port_infos: &mut [PortInfo], config: &Config) {
-    for info in port_infos.iter_mut() {
+    port_infos.iter_mut().for_each(|info| {
         if let Ok(port_num) = info.port.parse::<u16>() {
-            if let Some(port_config) = config.ports.get(&port_num) {
-                info.category = port_config.category.clone();
+            if let Some((category, _priority)) = config.get_port_config(port_num) {
+                info.category = category.to_string();
             }
         }
-    }
+    });
 }
 
 fn filter_port_infos(
     port_infos: Vec<PortInfo>,
     port_filter: Option<u16>,
-    process_filter: Option<String>,
+    process_filter: Option<&str>,
     all: bool,
     config: &Config,
 ) -> Vec<PortInfo> {
     port_infos
         .into_iter()
         .filter(|info| {
-            // ポートフィルタ
+            // Port filter
             if let Some(port) = port_filter {
                 if info.port != port.to_string() {
                     return false;
                 }
             }
 
-            // プロセス名フィルタ
-            if let Some(ref process) = process_filter {
+            // Process name filter
+            if let Some(process) = process_filter {
                 if !info.process.to_lowercase().contains(&process.to_lowercase()) {
                     return false;
                 }
             }
 
-            // 全表示でない場合は、設定にあるポートのみ
+            // If not showing all, only show monitored ports
             if !all {
-                if let Ok(port_num) = info.port.parse::<u16>() {
-                    if !config.ports.contains_key(&port_num) {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
+                info.port
+                    .parse::<u16>()
+                    .map(|port_num| config.is_monitored(port_num))
+                    .unwrap_or(false)
+            } else {
+                true
             }
-
-            true
         })
         .collect()
 }
@@ -228,16 +213,11 @@ fn filter_port_infos(
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match &cli.command {
-        Some(Commands::Init) => {
-            let config = Config::default();
-            config.save()?;
-            println!("✓ 設定ファイルを初期化しました: {:?}", Config::config_path()?);
-            return Ok(());
-        }
-        Some(Commands::List) | None => {
-            // 通常の一覧表示処理
-        }
+    if let Some(Commands::Init) = &cli.command {
+        let config = Config::default();
+        config.save()?;
+        println!("✓ Initialized config file: {:?}", Config::config_path()?);
+        return Ok(());
     }
 
     let config = Config::load()?;
@@ -245,16 +225,21 @@ fn main() -> Result<()> {
 
     enrich_with_config(&mut port_infos, &config);
 
-    let filtered = filter_port_infos(port_infos, cli.port, cli.process, cli.all, &config);
+    let filtered = filter_port_infos(
+        port_infos,
+        cli.port,
+        cli.process.as_deref(),
+        cli.all,
+        &config,
+    );
 
     if filtered.is_empty() {
-        println!("{}", "ポートが見つかりませんでした".yellow());
+        println!("{}", "No ports found".yellow());
         return Ok(());
     }
 
-    let table = Table::new(&filtered).to_string();
-    println!("{}", table);
-    println!("\n{} ポート検出", filtered.len());
+    println!("{}", Table::new(&filtered));
+    println!("\n{} port(s) detected", filtered.len());
 
     Ok(())
 }

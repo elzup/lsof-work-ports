@@ -66,21 +66,43 @@ lsof-work-ports init
 設定ファイル (`~/.config/lsof-work-ports/config.toml`) の例:
 
 ```toml
-[ports.3000]
-name = "React Dev Server"
+# Individual port definitions
+[[ports]]
+port = 3000
+name = "My React App"
 category = "Frontend"
 priority = 1
 
-[ports.8080]
+[[ports]]
+port = 8080
 name = "HTTP Server"
 category = "Backend"
 priority = 2
 
-[ports.5432]
-name = "PostgreSQL"
-category = "Database"
-priority = 3
+# Port range definitions
+[[port_ranges]]
+start = 3000
+end = 3100
+name = "Frontend Dev Servers"
+category = "Frontend"
+priority = 1
+
+[[port_ranges]]
+start = 8000
+end = 9000
+name = "Backend Services"
+category = "Backend"
+priority = 2
 ```
+
+### 設定の特徴
+
+- **個別ポート設定**: 特定のポート番号を監視
+- **ポート範囲設定**: 連続したポート範囲を一括監視（例: 3000-3100）
+- **カテゴリ分け**: Frontend, Backend, Database, Cacheなど
+- **優先順位**: 数値で優先度を指定（将来の機能拡張用）
+
+設定ファイルがない場合は、デフォルト設定が使用されます。
 
 ### デフォルトで監視されるポート
 

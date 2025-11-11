@@ -1,0 +1,84 @@
+# Default port configuration for lsof-work-ports
+
+# Individual port definitions
+[[ports]]
+port = 3000
+name = "React Dev Server"
+category = "Frontend"
+priority = 1
+
+[[ports]]
+port = 3001
+name = "Next.js Dev"
+category = "Frontend"
+priority = 1
+
+[[ports]]
+port = 5173
+name = "Vite Dev Server"
+category = "Frontend"
+priority = 1
+
+[[ports]]
+port = 4000
+name = "API Server"
+category = "Backend"
+priority = 2
+
+[[ports]]
+port = 8000
+name = "HTTP Server Alt"
+category = "Backend"
+priority = 2
+
+[[ports]]
+port = 8080
+name = "HTTP Server"
+category = "Backend"
+priority = 2
+
+[[ports]]
+port = 3306
+name = "MySQL"
+category = "Database"
+priority = 3
+
+[[ports]]
+port = 5432
+name = "PostgreSQL"
+category = "Database"
+priority = 3
+
+[[ports]]
+port = 27017
+name = "MongoDB"
+category = "Database"
+priority = 3
+
+[[ports]]
+port = 6379
+name = "Redis"
+category = "Cache"
+priority = 3
+
+# Port range definitions
+[[port_ranges]]
+start = 3000
+end = 3099
+name = "Dev Servers"
+category = "Frontend"
+priority = 1
+
+[[port_ranges]]
+start = 8000
+end = 8999
+name = "HTTP Servers"
+category = "Backend"
+priority = 2
+
+[[port_ranges]]
+start = 5000
+end = 5999
+name = "Custom Services"
+category = "Backend"
+priority = 2
