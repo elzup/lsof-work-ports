@@ -14,18 +14,24 @@ name = "GraphQL API"
 category = "Backend"
 priority = 2
 
-# Port range definitions
-# Useful for monitoring ranges of ports
+# Port range definitions - two formats supported
+# Format 1: start and end fields
 [[port_ranges]]
-start = 3000
-end = 3100
+start = 8000
+end = 9000
+name = "Backend Services"
+category = "Backend"
+priority = 2
+
+# Format 2: range string (simpler!)
+[[port_ranges]]
+range = "3000-3100"
 name = "Frontend Dev Servers"
 category = "Frontend"
 priority = 1
 
 [[port_ranges]]
-start = 8000
-end = 9000
-name = "Backend Services"
+range = "6000-6999"
+name = "Custom Ports"
 category = "Backend"
 priority = 2

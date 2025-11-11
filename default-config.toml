@@ -61,14 +61,8 @@ name = "Redis"
 category = "Cache"
 priority = 3
 
-# Port range definitions
-[[port_ranges]]
-start = 3000
-end = 3099
-name = "Dev Servers"
-category = "Frontend"
-priority = 1
-
+# Port range definitions (two formats supported)
+# Format 1: start and end
 [[port_ranges]]
 start = 8000
 end = 8999
@@ -76,9 +70,15 @@ name = "HTTP Servers"
 category = "Backend"
 priority = 2
 
+# Format 2: range string (e.g., "3000-3100")
 [[port_ranges]]
-start = 5000
-end = 5999
+range = "3000-3099"
+name = "Dev Servers"
+category = "Frontend"
+priority = 1
+
+[[port_ranges]]
+range = "5000-5999"
 name = "Custom Services"
 category = "Backend"
 priority = 2

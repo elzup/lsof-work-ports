@@ -64,12 +64,51 @@ struct PortEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PortRange {
-    start: u16,
-    end: u16,
-    name: String,
-    category: String,
-    priority: u8,
+#[serde(untagged)]
+enum PortRange {
+    Range {
+        start: u16,
+        end: u16,
+        name: String,
+        category: String,
+        priority: u8,
+    },
+    RangeString {
+        range: String,
+        name: String,
+        category: String,
+        priority: u8,
+    },
+}
+
+impl PortRange {
+    fn matches(&self, port: u16) -> bool {
+        match self {
+            PortRange::Range { start, end, .. } => port >= *start && port <= *end,
+            PortRange::RangeString { range, .. } => {
+                if let Some((start_str, end_str)) = range.split_once('-') {
+                    if let (Ok(start), Ok(end)) = (start_str.parse::<u16>(), end_str.parse::<u16>()) {
+                        return port >= start && port <= end;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    fn category(&self) -> &str {
+        match self {
+            PortRange::Range { category, .. } => category,
+            PortRange::RangeString { category, .. } => category,
+        }
+    }
+
+    fn priority(&self) -> u8 {
+        match self {
+            PortRange::Range { priority, .. } => *priority,
+            PortRange::RangeString { priority, .. } => *priority,
+        }
+    }
 }
 
 impl Default for Config {
@@ -92,8 +131,8 @@ impl Config {
         // Check port ranges
         self.port_ranges
             .iter()
-            .find(|range| port_num >= range.start && port_num <= range.end)
-            .map(|range| (range.category.as_str(), range.priority))
+            .find(|range| range.matches(port_num))
+            .map(|range| (range.category(), range.priority()))
     }
 
     fn is_monitored(&self, port_num: u16) -> bool {
