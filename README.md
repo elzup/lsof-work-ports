@@ -1,110 +1,119 @@
 # lsof-work-ports
 
-プロセスに占有されているポートを管理するRustプログラム。どこで使われているのかをすぐに発見できます。
+A Rust program to manage and monitor ports occupied by processes. Quickly discover which processes are using which ports.
 
-## 特徴
+## Features
 
-- `lsof`コマンドをラップして、プロセスが占有しているポートを見やすく表示
-- 一般的な開発用ポート（3000, 8080, 5173など）をデフォルトで監視
-- ポート番号やプロセス名でフィルタリング可能
-- カスタム設定ファイルで監視対象ポートをカスタマイズ
-- ポートのカテゴリ分け（Frontend, Backend, Database, Cache）と優先順位設定
+- Wraps `lsof` command to display port usage in a clean format
+- Monitors common development ports (3000, 8080, 5173, etc.) by default
+- Filter by port number or process name
+- Customizable port monitoring via config file
+- Supports flexible port specifications: single ports, ranges, comma-separated, and mixed formats
+- Groups multiple processes on the same port
+- Sorting options: by port number or recent activity
+- Configurable display limit
 
-## インストール
+## Installation
 
 ```bash
 cargo install --path .
 ```
 
-または、リリースビルド:
+Or build from source:
 
 ```bash
 cargo build --release
-# バイナリは target/release/lsof-work-ports に生成されます
+# Binary will be at target/release/lsof-work-ports
 ```
 
-## 使い方
+## Usage
 
-### 基本的な使い方
+### Basic usage
 
-デフォルトでは、設定ファイルに登録されている開発用ポートのみを表示:
+By default, shows only monitored ports from config:
 
 ```bash
 lsof-work-ports
 ```
 
-### すべてのポートを表示
+### Show all ports
 
 ```bash
 lsof-work-ports --all
 ```
 
-### 特定のポートでフィルタ
+### Filter by specific port
 
 ```bash
 lsof-work-ports --port 3000
 ```
 
-### 特定のプロセス名でフィルタ
+### Filter by process name
 
 ```bash
 lsof-work-ports --process node
 ```
 
-### 設定ファイルの初期化
+### Limit output
 
-デフォルト設定で設定ファイルを生成:
+```bash
+# Show first 10 ports
+lsof-work-ports --limit 10
+
+# Show 10 most recently started processes
+lsof-work-ports --all --sort-recent --limit 10
+```
+
+### Initialize config file
+
+Generate config file with defaults:
 
 ```bash
 lsof-work-ports init
 ```
 
-設定ファイルは `~/.config/lsof-work-ports/config.toml` に作成されます。
+Config file will be created at `~/.config/lsof-work-ports/config.toml`.
 
-## 設定ファイル
+## Configuration
 
-設定ファイル (`~/.config/lsof-work-ports/config.toml`) の例:
+Example config file (`~/.config/lsof-work-ports/config.toml`):
 
 ```toml
-# Individual port definitions
+# Single port
 [[ports]]
-port = 3000
+ports = "3000"
 name = "My React App"
-category = "Frontend"
-priority = 1
 
+# Port range
 [[ports]]
-port = 8080
-name = "HTTP Server"
-category = "Backend"
-priority = 2
-
-# Port range definitions
-[[port_ranges]]
-start = 3000
-end = 3100
+ports = "3000-3100"
 name = "Frontend Dev Servers"
-category = "Frontend"
-priority = 1
 
-[[port_ranges]]
-start = 8000
-end = 9000
-name = "Backend Services"
-category = "Backend"
-priority = 2
+# Comma-separated ports
+[[ports]]
+ports = "6000,6001,6002"
+name = "Cache Servers"
+
+# Mixed format
+[[ports]]
+ports = "7000-7010,7777,8888,9000-9010"
+name = "Mixed Ports"
+
+# Name is optional
+[[ports]]
+ports = "4000"
 ```
 
-### 設定の特徴
+### Port specification formats
 
-- **個別ポート設定**: 特定のポート番号を監視
-- **ポート範囲設定**: 連続したポート範囲を一括監視（例: 3000-3100）
-- **カテゴリ分け**: Frontend, Backend, Database, Cacheなど
-- **優先順位**: 数値で優先度を指定（将来の機能拡張用）
+- **Single port**: `"3000"`
+- **Range**: `"3000-3100"`
+- **Comma-separated**: `"6000,6001,6002"`
+- **Mixed**: `"7000-7010,7777,8888,9000-9010"`
 
-設定ファイルがない場合は、デフォルト設定が使用されます。
+If no config file exists, default settings will be used.
 
-### デフォルトで監視されるポート
+### Default monitored ports
 
 - **Frontend**
   - 3000: React Dev Server
@@ -124,33 +133,32 @@ priority = 2
 - **Cache**
   - 6379: Redis
 
-## 出力例
+## Output example
 
 ```
-┌──────┬──────────┬───────┬──────────┬──────────┐
-│ PORT │ PROCESS  │ PID   │ TYPE     │ CATEGORY │
-├──────┼──────────┼───────┼──────────┼──────────┤
-│ 3000 │ node     │ 12345 │ TCP      │ Frontend │
-│ 8080 │ python3  │ 23456 │ TCP      │ Backend  │
-│ 5432 │ postgres │ 34567 │ TCP      │ Database │
-└──────┴──────────┴───────┴──────────┴──────────┘
+5 port(s) detected:
 
-3 ポート検出
+:3000  ruby                 (PID: 7894)   puma 3.12.6 (tcp://0.0.0.0:3000)
+:5000  ControlCe, ... (x2)  (PIDs: 94528) /System/Library/CoreServices/ControlCenter
+:5353  Opera, ... (x24)     (PIDs: 28951, 98294, ... x2) /Applications/Opera.app
+
+:3306  MySQLWork            (PID: 43260)  /Applications/MySQLWorkbench.app
+:6379  com.docke            (PID: 9340)   /Applications/Docker.app/Contents/MacOS
 ```
 
-## 開発
+## Development
 
 ```bash
-# 開発ビルド
+# Development build
 cargo build
 
-# テスト実行
+# Run tests
 cargo test
 
-# リリースビルド
+# Release build
 cargo build --release
 ```
 
-## ライセンス
+## License
 
 MIT
