@@ -23,6 +23,18 @@ struct Cli {
     /// Show all ports (default: only monitored ports)
     #[arg(short, long)]
     all: bool,
+
+    /// Number of ports to display (default: all)
+    #[arg(short = 'l', long, default_value = "0")]
+    limit: usize,
+
+    /// Sort by port number (ascending)
+    #[arg(long)]
+    sort_port: bool,
+
+    /// Sort by recent activity (most recent first)
+    #[arg(long)]
+    sort_recent: bool,
 }
 
 #[derive(Subcommand)]
@@ -39,6 +51,16 @@ struct PortInfo {
     process: String,
     pid: String,
     command: String,
+    start_time: String, // Process start time from ps
+}
+
+#[derive(Debug, Clone)]
+struct GroupedPortInfo {
+    port: u16,
+    processes: Vec<String>,
+    pids: Vec<String>,
+    command: String,
+    start_time: String, // Most recent start time from the group
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -143,8 +165,9 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
             let pid = parts[1];
             let name_field = parts[8];
 
-            // Get command line
+            // Get command line and start time
             let command = get_process_command(pid).unwrap_or_else(|_| process.to_string());
+            let start_time = get_process_start_time(pid).unwrap_or_default();
 
             extract_port(name_field).and_then(|port_str| {
                 port_str.parse::<u16>().ok().map(|port| PortInfo {
@@ -152,6 +175,7 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
                     process: process.into(),
                     pid: pid.into(),
                     command,
+                    start_time,
                 })
             })
         })
@@ -161,6 +185,15 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
 fn get_process_command(pid: &str) -> Result<String> {
     let output = Command::new("ps")
         .args(["-p", pid, "-o", "command="])
+        .output()
+        .context("Failed to execute ps command")?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn get_process_start_time(pid: &str) -> Result<String> {
+    let output = Command::new("ps")
+        .args(["-p", pid, "-o", "lstart="])
         .output()
         .context("Failed to execute ps command")?;
 
@@ -205,19 +238,69 @@ fn filter_port_infos(
         .collect()
 }
 
-fn display_port_info(info: &PortInfo) {
+fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut grouped: HashMap<u16, Vec<PortInfo>> = HashMap::new();
+    for info in port_infos {
+        grouped.entry(info.port).or_default().push(info);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(port, infos)| {
+            let processes: Vec<String> = infos.iter().map(|i| i.process.clone()).collect();
+            // Deduplicate PIDs while preserving order
+            let pids: Vec<String> = {
+                let mut seen = HashSet::new();
+                infos
+                    .iter()
+                    .filter_map(|i| {
+                        if seen.insert(i.pid.clone()) {
+                            Some(i.pid.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+            let command = infos.first().map(|i| i.command.clone()).unwrap_or_default();
+            // Use the most recent start time (first in the list)
+            let start_time = infos.first().map(|i| i.start_time.clone()).unwrap_or_default();
+
+            GroupedPortInfo { port, processes, pids, command, start_time }
+        })
+        .collect()
+}
+
+fn display_grouped_port_info(info: &GroupedPortInfo) {
     // Get terminal width, default to 80 if unavailable
     let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
 
     // Fixed width for port (6 chars: ":12345"), left-aligned
     let port_str = format!(":{:<5}", info.port);
-    // Fixed width for process name (15 chars)
-    let process_str = format!("{:15}", info.process);
-    // PID with brackets
-    let pid_str = format!("(PID: {})", info.pid);
+
+    // Fixed width for process display (20 chars)
+    const PROCESS_WIDTH: usize = 20;
+    let process_display = if info.processes.len() == 1 {
+        format!("{:<width$}", info.processes[0], width = PROCESS_WIDTH)
+    } else {
+        let first_process = &info.processes[0];
+        let count_str = format!("{}, ... (x{})", first_process, info.processes.len());
+        format!("{:<width$}", count_str, width = PROCESS_WIDTH)
+    };
+
+    // PID display - limit to first 3 PIDs if too many
+    let pid_display = if info.pids.len() == 1 {
+        format!("(PID: {})", info.pids[0])
+    } else if info.pids.len() <= 3 {
+        format!("(PIDs: {})", info.pids.join(", "))
+    } else {
+        format!("(PIDs: {}, ... x{})", info.pids[..2].join(", "), info.pids.len())
+    };
 
     // Calculate available space for command
-    let prefix_len = 6 + 1 + 15 + 1 + pid_str.chars().count() + 2; // port + space + process + space + pid + "  "
+    let prefix_len = 6 + 1 + PROCESS_WIDTH + 1 + pid_display.chars().count() + 2;
     let max_command_len = term_width.saturating_sub(prefix_len);
     let display_command = if info.command.chars().count() > max_command_len {
         info.command.chars().take(max_command_len).collect::<String>()
@@ -228,8 +311,8 @@ fn display_port_info(info: &PortInfo) {
     println!(
         "{} {} {}  {}",
         port_str.cyan().bold(),
-        process_str.green(),
-        pid_str.bright_black(),
+        process_display.green(),
+        pid_display.bright_black(),
         display_command.bright_black()
     );
 }
@@ -260,9 +343,43 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    println!("\n{} port(s) detected:\n", filtered.len());
-    for info in &filtered {
-        display_port_info(info);
+    let grouped = group_by_port(filtered);
+
+    // Separate monitored and non-monitored ports
+    let (mut monitored, mut non_monitored): (Vec<_>, Vec<_>) =
+        grouped.into_iter().partition(|info| config.is_monitored(info.port));
+
+    // Apply sorting
+    if cli.sort_recent {
+        // Sort by start time (most recent first)
+        monitored.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        non_monitored.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+    } else {
+        // Default: sort by port number (ascending)
+        monitored.sort_by_key(|info| info.port);
+        non_monitored.sort_by_key(|info| info.port);
+    }
+
+    // Apply limit
+    let limit = if cli.limit > 0 { cli.limit } else { usize::MAX };
+    let monitored: Vec<_> = monitored.into_iter().take(limit).collect();
+    let non_monitored: Vec<_> = non_monitored.into_iter().take(limit).collect();
+
+    println!("\n{} port(s) detected:\n", monitored.len() + non_monitored.len());
+
+    // Display monitored ports first
+    for info in &monitored {
+        display_grouped_port_info(info);
+    }
+
+    // Add blank line between monitored and non-monitored
+    if !monitored.is_empty() && !non_monitored.is_empty() {
+        println!();
+    }
+
+    // Display non-monitored ports
+    for info in &non_monitored {
+        display_grouped_port_info(info);
     }
 
     Ok(())
