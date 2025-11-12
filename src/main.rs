@@ -209,8 +209,8 @@ fn display_port_info(info: &PortInfo) {
     // Get terminal width, default to 80 if unavailable
     let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
 
-    // Fixed width for port (6 chars: ":12345")
-    let port_str = format!(":{:5}", info.port);
+    // Fixed width for port (6 chars: ":12345"), left-aligned
+    let port_str = format!(":{:<5}", info.port);
     // Fixed width for process name (15 chars)
     let process_str = format!("{:15}", info.process);
     // PID with brackets
