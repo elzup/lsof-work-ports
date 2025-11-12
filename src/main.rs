@@ -43,100 +43,56 @@ struct PortInfo {
     pid: String,
     #[tabled(rename = "TYPE")]
     port_type: String,
-    #[tabled(rename = "CATEGORY")]
-    category: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     #[serde(default)]
     ports: Vec<PortEntry>,
-    #[serde(default)]
-    port_ranges: Vec<PortRange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PortEntry {
-    port: u16,
-    name: String,
-    category: String,
-    priority: u8,
+    ports: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-enum PortRange {
-    Range {
-        start: u16,
-        end: u16,
-        name: String,
-        category: String,
-        priority: u8,
-    },
-    RangeString {
-        range: String,
-        name: String,
-        category: String,
-        priority: u8,
-    },
-}
-
-impl PortRange {
-    fn matches(&self, port: u16) -> bool {
-        match self {
-            PortRange::Range { start, end, .. } => port >= *start && port <= *end,
-            PortRange::RangeString { range, .. } => {
-                if let Some((start_str, end_str)) = range.split_once('-') {
-                    if let (Ok(start), Ok(end)) = (start_str.parse::<u16>(), end_str.parse::<u16>()) {
-                        return port >= start && port <= end;
+impl PortEntry {
+    fn matches(&self, target: u16) -> bool {
+        // Support formats: "3000", "3000-3100", "3000,3001,3002", "3000-3010,4000,5000-5100"
+        for part in self.ports.split(',') {
+            let part = part.trim();
+            if let Some((start_str, end_str)) = part.split_once('-') {
+                // Range: "3000-3100"
+                if let (Ok(start), Ok(end)) =
+                    (start_str.trim().parse::<u16>(), end_str.trim().parse::<u16>())
+                {
+                    if target >= start && target <= end {
+                        return true;
                     }
                 }
-                false
+            } else if let Ok(single_port) = part.parse::<u16>() {
+                // Single port: "3000"
+                if target == single_port {
+                    return true;
+                }
             }
         }
-    }
-
-    fn category(&self) -> &str {
-        match self {
-            PortRange::Range { category, .. } => category,
-            PortRange::RangeString { category, .. } => category,
-        }
-    }
-
-    fn priority(&self) -> u8 {
-        match self {
-            PortRange::Range { priority, .. } => *priority,
-            PortRange::RangeString { priority, .. } => *priority,
-        }
+        false
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
         const DEFAULT_CONFIG: &str = include_str!("../default-config.toml");
-        toml::from_str(DEFAULT_CONFIG).unwrap_or_else(|_| Self {
-            ports: Vec::new(),
-            port_ranges: Vec::new(),
-        })
+        toml::from_str(DEFAULT_CONFIG).unwrap_or_else(|_| Self { ports: Vec::new() })
     }
 }
 
 impl Config {
-    fn get_port_config(&self, port_num: u16) -> Option<(&str, u8)> {
-        // Check exact port match first
-        if let Some(port_entry) = self.ports.iter().find(|p| p.port == port_num) {
-            return Some((&port_entry.category, port_entry.priority));
-        }
-
-        // Check port ranges
-        self.port_ranges
-            .iter()
-            .find(|range| range.matches(port_num))
-            .map(|range| (range.category(), range.priority()))
-    }
-
     fn is_monitored(&self, port_num: u16) -> bool {
-        self.get_port_config(port_num).is_some()
+        self.ports.iter().any(|entry| entry.matches(port_num))
     }
 
     fn load() -> Result<Self> {
@@ -192,7 +148,6 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
                 process: parts[0].into(),
                 pid: parts[1].into(),
                 port_type: parts[7].into(),
-                category: "Unknown".into(),
             })
         })
         .collect())
@@ -200,16 +155,6 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
 
 fn extract_port(name_field: &str) -> Option<&str> {
     name_field.split(':').last()
-}
-
-fn enrich_with_config(port_infos: &mut [PortInfo], config: &Config) {
-    port_infos.iter_mut().for_each(|info| {
-        if let Ok(port_num) = info.port.parse::<u16>() {
-            if let Some((category, _priority)) = config.get_port_config(port_num) {
-                info.category = category.to_string();
-            }
-        }
-    });
 }
 
 fn filter_port_infos(
@@ -260,9 +205,7 @@ fn main() -> Result<()> {
     }
 
     let config = Config::load()?;
-    let mut port_infos = get_port_info()?;
-
-    enrich_with_config(&mut port_infos, &config);
+    let port_infos = get_port_info()?;
 
     let filtered = filter_port_infos(
         port_infos,

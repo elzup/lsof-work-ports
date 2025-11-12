@@ -1,37 +1,22 @@
 # Example user configuration for lsof-work-ports
 # Copy this to ~/.config/lsof-work-ports/config.toml and customize
 
-# Individual port definitions
 [[ports]]
-port = 3000
+ports = "3000"
 name = "My React App"
-category = "Frontend"
-priority = 1
 
 [[ports]]
-port = 4000
-name = "GraphQL API"
-category = "Backend"
-priority = 2
-
-# Port range definitions - two formats supported
-# Format 1: start and end fields
-[[port_ranges]]
-start = 8000
-end = 9000
-name = "Backend Services"
-category = "Backend"
-priority = 2
-
-# Format 2: range string (simpler!)
-[[port_ranges]]
-range = "3000-3100"
+ports = "3000-3100"
 name = "Frontend Dev Servers"
-category = "Frontend"
-priority = 1
 
-[[port_ranges]]
-range = "6000-6999"
-name = "Custom Ports"
-category = "Backend"
-priority = 2
+[[ports]]
+ports = "6000,6001,6002"
+name = "Cache Servers"
+
+[[ports]]
+ports = "7000-7010,7777,8888,9000-9010"
+name = "Mixed Ports"
+
+# You can also omit the name if you don't need it
+[[ports]]
+ports = "4000"
