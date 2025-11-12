@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use tabled::{Table, Tabled};
+use terminal_size::{terminal_size, Width};
 
 #[derive(Parser)]
 #[command(name = "lsof-work-ports")]
@@ -33,16 +33,12 @@ enum Commands {
     List,
 }
 
-#[derive(Debug, Clone, Tabled)]
+#[derive(Debug, Clone)]
 struct PortInfo {
-    #[tabled(rename = "PORT")]
-    port: String,
-    #[tabled(rename = "PROCESS")]
+    port: u16,
     process: String,
-    #[tabled(rename = "PID")]
     pid: String,
-    #[tabled(rename = "TYPE")]
-    port_type: String,
+    command: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -143,14 +139,32 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
                 return None;
             }
 
-            extract_port(parts[8]).map(|port| PortInfo {
-                port: port.into(),
-                process: parts[0].into(),
-                pid: parts[1].into(),
-                port_type: parts[7].into(),
+            let process = parts[0];
+            let pid = parts[1];
+            let name_field = parts[8];
+
+            // Get command line
+            let command = get_process_command(pid).unwrap_or_else(|_| process.to_string());
+
+            extract_port(name_field).and_then(|port_str| {
+                port_str.parse::<u16>().ok().map(|port| PortInfo {
+                    port,
+                    process: process.into(),
+                    pid: pid.into(),
+                    command,
+                })
             })
         })
         .collect())
+}
+
+fn get_process_command(pid: &str) -> Result<String> {
+    let output = Command::new("ps")
+        .args(["-p", pid, "-o", "command="])
+        .output()
+        .context("Failed to execute ps command")?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn extract_port(name_field: &str) -> Option<&str> {
@@ -169,7 +183,7 @@ fn filter_port_infos(
         .filter(|info| {
             // Port filter
             if let Some(port) = port_filter {
-                if info.port != port.to_string() {
+                if info.port != port {
                     return false;
                 }
             }
@@ -183,15 +197,41 @@ fn filter_port_infos(
 
             // If not showing all, only show monitored ports
             if !all {
-                info.port
-                    .parse::<u16>()
-                    .map(|port_num| config.is_monitored(port_num))
-                    .unwrap_or(false)
+                config.is_monitored(info.port)
             } else {
                 true
             }
         })
         .collect()
+}
+
+fn display_port_info(info: &PortInfo) {
+    // Get terminal width, default to 80 if unavailable
+    let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
+
+    // Fixed width for port (6 chars: ":12345")
+    let port_str = format!(":{:5}", info.port);
+    // Fixed width for process name (15 chars)
+    let process_str = format!("{:15}", info.process);
+    // PID with brackets
+    let pid_str = format!("(PID: {})", info.pid);
+
+    // Calculate available space for command
+    let prefix_len = 6 + 1 + 15 + 1 + pid_str.chars().count() + 2; // port + space + process + space + pid + "  "
+    let max_command_len = term_width.saturating_sub(prefix_len);
+    let display_command = if info.command.chars().count() > max_command_len {
+        info.command.chars().take(max_command_len).collect::<String>()
+    } else {
+        info.command.clone()
+    };
+
+    println!(
+        "{} {} {}  {}",
+        port_str.cyan().bold(),
+        process_str.green(),
+        pid_str.bright_black(),
+        display_command.bright_black()
+    );
 }
 
 fn main() -> Result<()> {
@@ -220,8 +260,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    println!("{}", Table::new(&filtered));
-    println!("\n{} port(s) detected", filtered.len());
+    println!("\n{} port(s) detected:\n", filtered.len());
+    for info in &filtered {
+        display_port_info(info);
+    }
 
     Ok(())
 }
