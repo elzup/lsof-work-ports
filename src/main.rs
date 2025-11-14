@@ -63,6 +63,14 @@ struct GroupedPortInfo {
     start_time: String, // Most recent start time from the group
 }
 
+#[derive(Debug, Clone)]
+struct ProcessGroup {
+    process_name: String,
+    port_pid_pairs: Vec<(u16, String)>, // (port, pid) pairs
+    command: String,
+    start_time: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     #[serde(default)]
@@ -273,15 +281,45 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
         .collect()
 }
 
-fn display_grouped_port_info(info: &GroupedPortInfo) {
+fn group_by_process(port_infos: Vec<GroupedPortInfo>) -> Vec<ProcessGroup> {
+    use std::collections::HashMap;
+
+    let mut grouped: HashMap<String, Vec<GroupedPortInfo>> = HashMap::new();
+    for info in port_infos {
+        // Use first process name as the group key
+        let process_name = info.processes.first().cloned().unwrap_or_default();
+        grouped.entry(process_name).or_default().push(info);
+    }
+
+    grouped
+        .into_iter()
+        .map(|(process_name, infos)| {
+            let mut port_pid_pairs: Vec<(u16, String)> = Vec::new();
+
+            // Collect all port:pid pairs
+            for info in &infos {
+                for pid in &info.pids {
+                    port_pid_pairs.push((info.port, pid.clone()));
+                }
+            }
+
+            let command = infos.first().map(|i| i.command.clone()).unwrap_or_default();
+            let start_time = infos.first().map(|i| i.start_time.clone()).unwrap_or_default();
+
+            ProcessGroup { process_name, port_pid_pairs, command, start_time }
+        })
+        .collect()
+}
+
+fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
     // Get terminal width, default to 80 if unavailable
     let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
 
     // Fixed width for port (6 chars: ":12345"), left-aligned
     let port_str = format!(":{:<5}", info.port);
 
-    // Fixed width for process display (20 chars)
-    const PROCESS_WIDTH: usize = 20;
+    // Fixed width for process display (30 chars - increased from 20)
+    const PROCESS_WIDTH: usize = 30;
     let process_display = if info.processes.len() == 1 {
         format!("{:<width$}", info.processes[0], width = PROCESS_WIDTH)
     } else {
@@ -315,6 +353,56 @@ fn display_grouped_port_info(info: &GroupedPortInfo) {
         pid_display.bright_black(),
         display_command.bright_black()
     );
+
+    // Multi-line display for processes with multiple PIDs
+    if show_multi_line && info.pids.len() > 1 {
+        // Create port:pid pairs for all PIDs
+        let port_pid_pairs: Vec<String> = info
+            .pids
+            .iter()
+            .map(|pid| format!(":{} {}", info.port, pid))
+            .collect();
+
+        // Display all port:pid pairs on second line
+        println!("{}", port_pid_pairs.join(", ").bright_black());
+    }
+}
+
+fn display_process_group(group: &ProcessGroup) {
+    // Get terminal width, default to 80 if unavailable
+    let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
+
+    // Fixed width for process display (30 chars)
+    const PROCESS_WIDTH: usize = 30;
+    let process_display = format!("{:<width$}", group.process_name, width = PROCESS_WIDTH);
+
+    // Count display
+    let count_display = format!("(x{} ports)", group.port_pid_pairs.len());
+
+    // Calculate available space for command
+    let prefix_len = PROCESS_WIDTH + 1 + count_display.chars().count() + 2;
+    let max_command_len = term_width.saturating_sub(prefix_len);
+    let display_command = if group.command.chars().count() > max_command_len {
+        group.command.chars().take(max_command_len).collect::<String>()
+    } else {
+        group.command.clone()
+    };
+
+    println!(
+        "{} {}  {}",
+        process_display.green().bold(),
+        count_display.bright_black(),
+        display_command.bright_black()
+    );
+
+    // Display all port:pid pairs on second line
+    let port_pid_strs: Vec<String> = group
+        .port_pid_pairs
+        .iter()
+        .map(|(port, pid)| format!(":{} {}", port, pid))
+        .collect();
+
+    println!("{}", port_pid_strs.join(", ").bright_black());
 }
 
 fn main() -> Result<()> {
@@ -345,41 +433,107 @@ fn main() -> Result<()> {
 
     let grouped = group_by_port(filtered);
 
-    // Separate monitored and non-monitored ports
-    let (mut monitored, mut non_monitored): (Vec<_>, Vec<_>) =
+    // Separate into categories: monitored, non-monitored
+    let (monitored, non_monitored): (Vec<_>, Vec<_>) =
         grouped.into_iter().partition(|info| config.is_monitored(info.port));
+
+    // Group all non-monitored by process name to detect multi-port processes
+    let (mut others, mut multis, process_group_items): (Vec<_>, Vec<_>, Vec<_>) = {
+        use std::collections::HashMap;
+        let mut by_process: HashMap<String, Vec<GroupedPortInfo>> = HashMap::new();
+
+        for item in non_monitored {
+            let proc_name = item.processes.first().cloned().unwrap_or_default();
+            by_process.entry(proc_name).or_default().push(item);
+        }
+
+        let mut others = Vec::new();
+        let mut multis = Vec::new();
+        let mut process_groups = Vec::new();
+
+        for (_, items) in by_process {
+            if items.len() == 1 {
+                // Single port for this process
+                let item = &items[0];
+                if item.pids.len() == 1 {
+                    // Single port, single PID -> others
+                    others.push(item.clone());
+                } else {
+                    // Single port, multiple PIDs -> multis
+                    multis.push(item.clone());
+                }
+            } else {
+                // Multiple ports for same process -> process_groups
+                process_groups.extend(items);
+            }
+        }
+
+        (others, multis, process_groups)
+    };
+
+    let mut monitored = monitored;
+
+    // Group process_group_items by process name
+    let mut process_groups = group_by_process(process_group_items);
 
     // Apply sorting
     if cli.sort_recent {
         // Sort by start time (most recent first)
         monitored.sort_by(|a, b| b.start_time.cmp(&a.start_time));
-        non_monitored.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        others.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        multis.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        process_groups.sort_by(|a, b| b.start_time.cmp(&a.start_time));
     } else {
-        // Default: sort by port number (ascending)
+        // Default: sort by port number (ascending) or process name
         monitored.sort_by_key(|info| info.port);
-        non_monitored.sort_by_key(|info| info.port);
+        others.sort_by_key(|info| info.port);
+        multis.sort_by_key(|info| info.port);
+        process_groups.sort_by_key(|g| g.process_name.clone());
     }
 
     // Apply limit
     let limit = if cli.limit > 0 { cli.limit } else { usize::MAX };
     let monitored: Vec<_> = monitored.into_iter().take(limit).collect();
-    let non_monitored: Vec<_> = non_monitored.into_iter().take(limit).collect();
+    let others: Vec<_> = others.into_iter().take(limit).collect();
+    let multis: Vec<_> = multis.into_iter().take(limit).collect();
+    let process_groups: Vec<_> = process_groups.into_iter().take(limit).collect();
 
-    println!("\n{} port(s) detected:\n", monitored.len() + non_monitored.len());
+    let total_count = monitored.len() + others.len() + multis.len() + process_groups.len();
+    println!("\n{} port(s) detected:\n", total_count);
 
     // Display monitored ports first
-    for info in &monitored {
-        display_grouped_port_info(info);
-    }
-
-    // Add blank line between monitored and non-monitored
-    if !monitored.is_empty() && !non_monitored.is_empty() {
+    if !monitored.is_empty() {
+        println!("{}", "monitored".bright_blue().bold());
+        for info in &monitored {
+            display_grouped_port_info(info, false);
+        }
         println!();
     }
 
-    // Display non-monitored ports
-    for info in &non_monitored {
-        display_grouped_port_info(info);
+    // Display single-process others
+    if !others.is_empty() {
+        println!("{}", "others".bright_blue().bold());
+        for info in &others {
+            display_grouped_port_info(info, false);
+        }
+        println!();
+    }
+
+    // Display multi-process same-port with 2-line format
+    if !multis.is_empty() {
+        println!("{}", "multis".bright_blue().bold());
+        for info in &multis {
+            display_grouped_port_info(info, true);
+        }
+        println!();
+    }
+
+    // Display process groups (same process, multiple ports)
+    if !process_groups.is_empty() {
+        println!("{}", "process_groups".bright_blue().bold());
+        for group in &process_groups {
+            display_process_group(group);
+        }
     }
 
     Ok(())

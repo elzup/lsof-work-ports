@@ -1,5 +1,7 @@
 # Default port configuration for lsof-work-ports
+# Optimized for web and network developers
 
+# Frontend Development Servers
 [[ports]]
 ports = "3000"
 name = "React Dev Server"
@@ -9,21 +11,48 @@ ports = "3001"
 name = "Next.js Dev"
 
 [[ports]]
+ports = "4200"
+name = "Angular Dev Server"
+
+[[ports]]
 ports = "5173"
 name = "Vite Dev Server"
 
 [[ports]]
+ports = "8080"
+name = "Webpack Dev Server"
+
+[[ports]]
+ports = "9000"
+name = "Gatsby Dev Server"
+
+# Backend API Servers
+[[ports]]
 ports = "4000"
-name = "API Server"
+name = "GraphQL Server"
+
+[[ports]]
+ports = "5000"
+name = "Flask/Python Dev"
 
 [[ports]]
 ports = "8000"
-name = "HTTP Server Alt"
+name = "Django/FastAPI"
 
 [[ports]]
-ports = "8080"
-name = "HTTP Server"
+ports = "3030"
+name = "FeathersJS"
 
+# Node.js & TypeScript
+[[ports]]
+ports = "3333"
+name = "NestJS"
+
+[[ports]]
+ports = "5001"
+name = "Express Server"
+
+# Databases
 [[ports]]
 ports = "3306"
 name = "MySQL"
@@ -37,17 +66,138 @@ ports = "27017"
 name = "MongoDB"
 
 [[ports]]
+ports = "28015"
+name = "RethinkDB"
+
+[[ports]]
+ports = "9042"
+name = "Cassandra"
+
+# Cache & Message Queue
+[[ports]]
 ports = "6379"
 name = "Redis"
 
 [[ports]]
+ports = "11211"
+name = "Memcached"
+
+[[ports]]
+ports = "5672"
+name = "RabbitMQ"
+
+[[ports]]
+ports = "9092"
+name = "Kafka"
+
+# Search & Analytics
+[[ports]]
+ports = "9200"
+name = "Elasticsearch"
+
+[[ports]]
+ports = "9300"
+name = "Elasticsearch Transport"
+
+[[ports]]
+ports = "5601"
+name = "Kibana"
+
+# Proxy & Load Balancer
+[[ports]]
+ports = "80"
+name = "HTTP"
+
+[[ports]]
+ports = "443"
+name = "HTTPS"
+
+[[ports]]
+ports = "8080"
+name = "HTTP Proxy"
+
+[[ports]]
+ports = "3128"
+name = "Squid Proxy"
+
+[[ports]]
+ports = "8888"
+name = "HTTP Alt"
+
+# WebSocket & Real-time
+[[ports]]
+ports = "3001"
+name = "Socket.io"
+
+[[ports]]
+ports = "8080"
+name = "WebSocket"
+
+# Development Tools
+[[ports]]
+ports = "9229"
+name = "Node.js Debugger"
+
+[[ports]]
+ports = "5858"
+name = "Node.js Inspector"
+
+[[ports]]
+ports = "9222"
+name = "Chrome DevTools"
+
+[[ports]]
+ports = "35729"
+name = "LiveReload"
+
+[[ports]]
+ports = "4000"
+name = "Storybook"
+
+# Docker & Containers
+[[ports]]
+ports = "2375"
+name = "Docker REST API"
+
+[[ports]]
+ports = "2376"
+name = "Docker TLS"
+
+# Monitoring & Metrics
+[[ports]]
+ports = "3000"
+name = "Grafana"
+
+[[ports]]
+ports = "9090"
+name = "Prometheus"
+
+[[ports]]
+ports = "8086"
+name = "InfluxDB"
+
+# Testing & Mock Servers
+[[ports]]
+ports = "9876"
+name = "Karma Test Runner"
+
+[[ports]]
+ports = "4444"
+name = "Selenium"
+
+# Common Development Ranges
+[[ports]]
 ports = "3000-3099"
-name = "Dev Servers Range"
+name = "Frontend Dev Servers"
+
+[[ports]]
+ports = "4000-4099"
+name = "Backend API Servers"
+
+[[ports]]
+ports = "5000-5099"
+name = "Python/Flask Servers"
 
 [[ports]]
 ports = "8000-8999"
-name = "HTTP Servers Range"
-
-[[ports]]
-ports = "5000-5999"
-name = "Custom Services Range"
+name = "HTTP Servers"
