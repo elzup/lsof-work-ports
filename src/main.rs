@@ -246,8 +246,24 @@ fn filter_port_infos(
         .collect()
 }
 
+fn deduplicate_pids(infos: &[PortInfo]) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    infos
+        .iter()
+        .filter_map(|i| {
+            if seen.insert(i.pid.clone()) {
+                Some(i.pid.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     let mut grouped: HashMap<u16, Vec<PortInfo>> = HashMap::new();
     for info in port_infos {
@@ -258,22 +274,8 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
         .into_iter()
         .map(|(port, infos)| {
             let processes: Vec<String> = infos.iter().map(|i| i.process.clone()).collect();
-            // Deduplicate PIDs while preserving order
-            let pids: Vec<String> = {
-                let mut seen = HashSet::new();
-                infos
-                    .iter()
-                    .filter_map(|i| {
-                        if seen.insert(i.pid.clone()) {
-                            Some(i.pid.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            };
+            let pids = deduplicate_pids(&infos);
             let command = infos.first().map(|i| i.command.clone()).unwrap_or_default();
-            // Use the most recent start time (first in the list)
             let start_time = infos.first().map(|i| i.start_time.clone()).unwrap_or_default();
 
             GroupedPortInfo { port, processes, pids, command, start_time }
