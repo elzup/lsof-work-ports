@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use terminal_size::{terminal_size, Width};
+use terminal_size::{Width, terminal_size};
 
 #[derive(Parser)]
 #[command(name = "lsof-work-ports")]
@@ -91,9 +91,10 @@ impl PortEntry {
             let part = part.trim();
             if let Some((start_str, end_str)) = part.split_once('-') {
                 // Range: "3000-3100"
-                if let (Ok(start), Ok(end)) =
-                    (start_str.trim().parse::<u16>(), end_str.trim().parse::<u16>())
-                {
+                if let (Ok(start), Ok(end)) = (
+                    start_str.trim().parse::<u16>(),
+                    end_str.trim().parse::<u16>(),
+                ) {
                     if target >= start && target <= end {
                         return true;
                     }
@@ -127,7 +128,8 @@ impl Config {
             return Ok(Self::default());
         }
 
-        let content = std::fs::read_to_string(&config_path).context("Failed to read config file")?;
+        let content =
+            std::fs::read_to_string(&config_path).context("Failed to read config file")?;
         toml::from_str(&content).context("Failed to parse config file")
     }
 
@@ -231,7 +233,11 @@ fn filter_port_infos(
 
             // Process name filter
             if let Some(process) = process_filter {
-                if !info.process.to_lowercase().contains(&process.to_lowercase()) {
+                if !info
+                    .process
+                    .to_lowercase()
+                    .contains(&process.to_lowercase())
+                {
                     return false;
                 }
             }
@@ -246,19 +252,29 @@ fn filter_port_infos(
         .collect()
 }
 
-fn deduplicate_pids(infos: &[PortInfo]) -> Vec<String> {
+/// Returns a closure that deduplicates items by a key function
+/// Usage: items.iter().filter_map(dedup_by(|item| item.key.clone())).collect()
+fn dedup_by<T, F, K>(mut key_fn: F) -> impl FnMut(&T) -> Option<K>
+where
+    F: FnMut(&T) -> K,
+    K: Eq + std::hash::Hash + Clone,
+{
     use std::collections::HashSet;
-
     let mut seen = HashSet::new();
+    move |item| {
+        let key = key_fn(item);
+        if seen.insert(key.clone()) {
+            Some(key)
+        } else {
+            None
+        }
+    }
+}
+
+fn deduplicate_pids(infos: &[PortInfo]) -> Vec<String> {
     infos
         .iter()
-        .filter_map(|i| {
-            if seen.insert(i.pid.clone()) {
-                Some(i.pid.clone())
-            } else {
-                None
-            }
-        })
+        .filter_map(dedup_by(|i: &PortInfo| i.pid.clone()))
         .collect()
 }
 
@@ -276,9 +292,18 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
             let processes: Vec<String> = infos.iter().map(|i| i.process.clone()).collect();
             let pids = deduplicate_pids(&infos);
             let command = infos.first().map(|i| i.command.clone()).unwrap_or_default();
-            let start_time = infos.first().map(|i| i.start_time.clone()).unwrap_or_default();
+            let start_time = infos
+                .first()
+                .map(|i| i.start_time.clone())
+                .unwrap_or_default();
 
-            GroupedPortInfo { port, processes, pids, command, start_time }
+            GroupedPortInfo {
+                port,
+                processes,
+                pids,
+                command,
+                start_time,
+            }
         })
         .collect()
 }
@@ -306,16 +331,26 @@ fn group_by_process(port_infos: Vec<GroupedPortInfo>) -> Vec<ProcessGroup> {
             }
 
             let command = infos.first().map(|i| i.command.clone()).unwrap_or_default();
-            let start_time = infos.first().map(|i| i.start_time.clone()).unwrap_or_default();
+            let start_time = infos
+                .first()
+                .map(|i| i.start_time.clone())
+                .unwrap_or_default();
 
-            ProcessGroup { process_name, port_pid_pairs, command, start_time }
+            ProcessGroup {
+                process_name,
+                port_pid_pairs,
+                command,
+                start_time,
+            }
         })
         .collect()
 }
 
 fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
     // Get terminal width, default to 80 if unavailable
-    let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
+    let term_width = terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(80);
 
     // Fixed width for port (6 chars: ":12345"), left-aligned
     let port_str = format!(":{:<5}", info.port);
@@ -336,14 +371,21 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
     } else if info.pids.len() <= 3 {
         format!("(PIDs: {})", info.pids.join(", "))
     } else {
-        format!("(PIDs: {}, ... x{})", info.pids[..2].join(", "), info.pids.len())
+        format!(
+            "(PIDs: {}, ... x{})",
+            info.pids[..2].join(", "),
+            info.pids.len()
+        )
     };
 
     // Calculate available space for command
     let prefix_len = 6 + 1 + PROCESS_WIDTH + 1 + pid_display.chars().count() + 2;
     let max_command_len = term_width.saturating_sub(prefix_len);
     let display_command = if info.command.chars().count() > max_command_len {
-        info.command.chars().take(max_command_len).collect::<String>()
+        info.command
+            .chars()
+            .take(max_command_len)
+            .collect::<String>()
     } else {
         info.command.clone()
     };
@@ -362,7 +404,7 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
         let port_pid_pairs: Vec<String> = info
             .pids
             .iter()
-            .map(|pid| format!(":{} {}", info.port, pid))
+            .map(|pid| format!("[{}]:{}", pid, info.port))
             .collect();
 
         // Display all port:pid pairs on second line
@@ -372,7 +414,9 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
 
 fn display_process_group(group: &ProcessGroup) {
     // Get terminal width, default to 80 if unavailable
-    let term_width = terminal_size().map(|(Width(w), _)| w as usize).unwrap_or(80);
+    let term_width = terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(80);
 
     // Fixed width for process display (30 chars)
     const PROCESS_WIDTH: usize = 30;
@@ -385,7 +429,11 @@ fn display_process_group(group: &ProcessGroup) {
     let prefix_len = PROCESS_WIDTH + 1 + count_display.chars().count() + 2;
     let max_command_len = term_width.saturating_sub(prefix_len);
     let display_command = if group.command.chars().count() > max_command_len {
-        group.command.chars().take(max_command_len).collect::<String>()
+        group
+            .command
+            .chars()
+            .take(max_command_len)
+            .collect::<String>()
     } else {
         group.command.clone()
     };
@@ -436,8 +484,9 @@ fn main() -> Result<()> {
     let grouped = group_by_port(filtered);
 
     // Separate into categories: monitored, non-monitored
-    let (monitored, non_monitored): (Vec<_>, Vec<_>) =
-        grouped.into_iter().partition(|info| config.is_monitored(info.port));
+    let (monitored, non_monitored): (Vec<_>, Vec<_>) = grouped
+        .into_iter()
+        .partition(|info| config.is_monitored(info.port));
 
     // Group all non-monitored by process name to detect multi-port processes
     let (mut others, mut multis, process_group_items): (Vec<_>, Vec<_>, Vec<_>) = {
