@@ -52,6 +52,7 @@ struct PortInfo {
     pid: String,
     command: String,
     start_time: String, // Process start time from ps
+    address: String,    // IP address (e.g., "127.0.0.1", "0.0.0.0", "*")
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,7 @@ struct GroupedPortInfo {
     pids: Vec<String>,
     command: String,
     start_time: String, // Most recent start time from the group
+    is_local: bool,     // Whether this is a local address (127.0.0.1, 0.0.0.0, etc.)
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +71,7 @@ struct ProcessGroup {
     port_pid_pairs: Vec<(u16, String)>, // (port, pid) pairs
     command: String,
     start_time: String,
+    is_local: bool, // Whether this group contains local addresses
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,6 +189,7 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
                     pid: pid.into(),
                     command,
                     start_time,
+                    address: extract_address(name_field),
                 })
             })
         })
@@ -212,6 +216,22 @@ fn get_process_start_time(pid: &str) -> Result<String> {
 
 fn extract_port(name_field: &str) -> Option<&str> {
     name_field.split(':').last()
+}
+
+fn extract_address(name_field: &str) -> String {
+    // Format examples: "*:8080", "127.0.0.1:3000", "localhost:5000"
+    if let Some(addr) = name_field.split(':').next() {
+        addr.to_string()
+    } else {
+        "*".to_string()
+    }
+}
+
+fn is_local_address(address: &str) -> bool {
+    matches!(
+        address,
+        "127.0.0.1" | "localhost" | "0.0.0.0" | "*" | "[::1]" | "[::]"
+    )
 }
 
 fn filter_port_infos(
@@ -296,6 +316,10 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
                 .first()
                 .map(|i| i.start_time.clone())
                 .unwrap_or_default();
+            let is_local = infos
+                .first()
+                .map(|i| is_local_address(&i.address))
+                .unwrap_or(false);
 
             GroupedPortInfo {
                 port,
@@ -303,6 +327,7 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
                 pids,
                 command,
                 start_time,
+                is_local,
             }
         })
         .collect()
@@ -335,12 +360,14 @@ fn group_by_process(port_infos: Vec<GroupedPortInfo>) -> Vec<ProcessGroup> {
                 .first()
                 .map(|i| i.start_time.clone())
                 .unwrap_or_default();
+            let is_local = infos.first().map(|i| i.is_local).unwrap_or(false);
 
             ProcessGroup {
                 process_name,
                 port_pid_pairs,
                 command,
                 start_time,
+                is_local,
             }
         })
         .collect()
@@ -351,6 +378,9 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
     let term_width = terminal_size()
         .map(|(Width(w), _)| w as usize)
         .unwrap_or(80);
+
+    // Local indicator (2 chars: "L " or "  ")
+    let local_indicator = if info.is_local { "L " } else { "  " };
 
     // Fixed width for port (6 chars: ":12345"), left-aligned
     let port_str = format!(":{:<5}", info.port);
@@ -378,8 +408,8 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
         )
     };
 
-    // Calculate available space for command
-    let prefix_len = 6 + 1 + PROCESS_WIDTH + 1 + pid_display.chars().count() + 2;
+    // Calculate available space for command (account for local_indicator)
+    let prefix_len = 2 + 6 + 1 + PROCESS_WIDTH + 1 + pid_display.chars().count() + 2;
     let max_command_len = term_width.saturating_sub(prefix_len);
     let display_command = if info.command.chars().count() > max_command_len {
         info.command
@@ -391,7 +421,8 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
     };
 
     println!(
-        "{} {} {}  {}",
+        "{}{} {} {}  {}",
+        local_indicator,
         port_str.cyan().bold(),
         process_display.green(),
         pid_display.bright_black(),
@@ -418,6 +449,9 @@ fn display_process_group(group: &ProcessGroup) {
         .map(|(Width(w), _)| w as usize)
         .unwrap_or(80);
 
+    // Local indicator (2 chars: "L " or "  ")
+    let local_indicator = if group.is_local { "L " } else { "  " };
+
     // Fixed width for process display (30 chars)
     const PROCESS_WIDTH: usize = 30;
     let process_display = format!("{:<width$}", group.process_name, width = PROCESS_WIDTH);
@@ -425,8 +459,8 @@ fn display_process_group(group: &ProcessGroup) {
     // Count display
     let count_display = format!("(x{} ports)", group.port_pid_pairs.len());
 
-    // Calculate available space for command
-    let prefix_len = PROCESS_WIDTH + 1 + count_display.chars().count() + 2;
+    // Calculate available space for command (account for local_indicator)
+    let prefix_len = 2 + PROCESS_WIDTH + 1 + count_display.chars().count() + 2;
     let max_command_len = term_width.saturating_sub(prefix_len);
     let display_command = if group.command.chars().count() > max_command_len {
         group
@@ -439,7 +473,8 @@ fn display_process_group(group: &ProcessGroup) {
     };
 
     println!(
-        "{} {}  {}",
+        "{}{} {}  {}",
+        local_indicator,
         process_display.green().bold(),
         count_display.bright_black(),
         display_command.bright_black()
