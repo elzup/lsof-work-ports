@@ -74,6 +74,70 @@ struct ProcessGroup {
     is_local: bool, // Whether this group contains local addresses
 }
 
+// ============================================================================
+// Display Format Configuration
+// ============================================================================
+//
+// This section contains all display formatting settings and functions.
+// Modify these constants and functions to customize the output format.
+//
+
+/// Display format configuration constants
+mod display_config {
+    /// Width of the process name column (in characters)
+    pub const PROCESS_WIDTH: usize = 30;
+
+    /// Indicator shown for local addresses (127.0.0.1, 0.0.0.0, localhost, etc.)
+    pub const LOCAL_INDICATOR_LOCAL: &str = "L ";
+
+    /// Indicator shown for remote/non-local addresses
+    pub const LOCAL_INDICATOR_REMOTE: &str = "  ";
+}
+
+/// Format a single PID:port pair
+///
+/// Returns: `[pid]:port` format (e.g., `[12345]:3000`)
+fn format_pid_port(pid: &str, port: u16) -> String {
+    format!("[{pid}]:{port}")
+}
+
+/// Format multiple PID:port pairs with optional truncation
+///
+/// # Arguments
+/// * `pids` - List of process IDs
+/// * `port` - Port number
+/// * `max_display` - Maximum number of pairs to display (None for all)
+///
+/// # Returns
+/// Comma-separated list of `[pid]:port` pairs with truncation if needed
+fn format_pid_port_list(pids: &[String], port: u16, max_display: Option<usize>) -> String {
+    match max_display {
+        Some(max) if pids.len() > max => {
+            let pairs: Vec<String> = pids[..max]
+                .iter()
+                .map(|pid| format_pid_port(pid, port))
+                .collect();
+            format!("{}, ... (x{})", pairs.join(", "), pids.len())
+        }
+        _ => {
+            let pairs: Vec<String> = pids.iter().map(|pid| format_pid_port(pid, port)).collect();
+            pairs.join(", ")
+        }
+    }
+}
+
+/// Check if an address is local (localhost, 127.0.0.1, 0.0.0.0, etc.)
+fn is_local_address(address: &str) -> bool {
+    matches!(
+        address,
+        "127.0.0.1" | "localhost" | "0.0.0.0" | "*" | "[::1]" | "[::]"
+    )
+}
+
+// ============================================================================
+// End Display Format Configuration
+// ============================================================================
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     #[serde(default)]
@@ -227,13 +291,6 @@ fn extract_address(name_field: &str) -> String {
     }
 }
 
-fn is_local_address(address: &str) -> bool {
-    matches!(
-        address,
-        "127.0.0.1" | "localhost" | "0.0.0.0" | "*" | "[::1]" | "[::]"
-    )
-}
-
 fn filter_port_infos(
     port_infos: Vec<PortInfo>,
     port_filter: Option<u16>,
@@ -374,19 +431,24 @@ fn group_by_process(port_infos: Vec<GroupedPortInfo>) -> Vec<ProcessGroup> {
 }
 
 fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
+    use display_config::*;
+
     // Get terminal width, default to 80 if unavailable
     let term_width = terminal_size()
         .map(|(Width(w), _)| w as usize)
         .unwrap_or(80);
 
     // Local indicator (2 chars: "L " or "  ")
-    let local_indicator = if info.is_local { "L " } else { "  " };
+    let local_indicator = if info.is_local {
+        LOCAL_INDICATOR_LOCAL
+    } else {
+        LOCAL_INDICATOR_REMOTE
+    };
 
     // Fixed width for port (6 chars: ":12345"), left-aligned
     let port_str = format!(":{:<5}", info.port);
 
-    // Fixed width for process display (30 chars - increased from 20)
-    const PROCESS_WIDTH: usize = 30;
+    // Fixed width for process display
     let process_display = if info.processes.len() == 1 {
         format!("{:<width$}", info.processes[0], width = PROCESS_WIDTH)
     } else {
@@ -396,21 +458,10 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
     };
 
     // PID display in [pid]:port format - limit to first 3 PIDs if too many
-    let pid_display = if info.pids.len() == 1 {
-        format!("[{}]:{}", info.pids[0], info.port)
-    } else if info.pids.len() <= 3 {
-        let pairs: Vec<String> = info
-            .pids
-            .iter()
-            .map(|pid| format!("[{}]:{}", pid, info.port))
-            .collect();
-        pairs.join(", ")
+    let pid_display = if info.pids.len() <= 3 {
+        format_pid_port_list(&info.pids, info.port, None)
     } else {
-        let pairs: Vec<String> = info.pids[..2]
-            .iter()
-            .map(|pid| format!("[{}]:{}", pid, info.port))
-            .collect();
-        format!("{}, ... (x{})", pairs.join(", "), info.pids.len())
+        format_pid_port_list(&info.pids, info.port, Some(2))
     };
 
     // Calculate available space for command (account for local_indicator)
@@ -440,7 +491,7 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
         let port_pid_pairs: Vec<String> = info
             .pids
             .iter()
-            .map(|pid| format!("[{}]:{}", pid, info.port))
+            .map(|pid| format_pid_port(pid, info.port))
             .collect();
 
         // Display all port:pid pairs on second line
@@ -449,16 +500,21 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
 }
 
 fn display_process_group(group: &ProcessGroup) {
+    use display_config::*;
+
     // Get terminal width, default to 80 if unavailable
     let term_width = terminal_size()
         .map(|(Width(w), _)| w as usize)
         .unwrap_or(80);
 
     // Local indicator (2 chars: "L " or "  ")
-    let local_indicator = if group.is_local { "L " } else { "  " };
+    let local_indicator = if group.is_local {
+        LOCAL_INDICATOR_LOCAL
+    } else {
+        LOCAL_INDICATOR_REMOTE
+    };
 
-    // Fixed width for process display (30 chars)
-    const PROCESS_WIDTH: usize = 30;
+    // Fixed width for process display
     let process_display = format!("{:<width$}", group.process_name, width = PROCESS_WIDTH);
 
     // Count display
@@ -489,7 +545,7 @@ fn display_process_group(group: &ProcessGroup) {
     let port_pid_strs: Vec<String> = group
         .port_pid_pairs
         .iter()
-        .map(|(port, pid)| format!("[{}]:{}", pid, port))
+        .map(|(port, pid)| format_pid_port(pid, *port))
         .collect();
 
     println!("{}", port_pid_strs.join(", ").bright_black());
