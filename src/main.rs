@@ -395,17 +395,22 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
         format!("{:<width$}", count_str, width = PROCESS_WIDTH)
     };
 
-    // PID display - limit to first 3 PIDs if too many
+    // PID display in [pid]:port format - limit to first 3 PIDs if too many
     let pid_display = if info.pids.len() == 1 {
-        format!("(PID: {})", info.pids[0])
+        format!("[{}]:{}", info.pids[0], info.port)
     } else if info.pids.len() <= 3 {
-        format!("(PIDs: {})", info.pids.join(", "))
+        let pairs: Vec<String> = info
+            .pids
+            .iter()
+            .map(|pid| format!("[{}]:{}", pid, info.port))
+            .collect();
+        pairs.join(", ")
     } else {
-        format!(
-            "(PIDs: {}, ... x{})",
-            info.pids[..2].join(", "),
-            info.pids.len()
-        )
+        let pairs: Vec<String> = info.pids[..2]
+            .iter()
+            .map(|pid| format!("[{}]:{}", pid, info.port))
+            .collect();
+        format!("{}, ... (x{})", pairs.join(", "), info.pids.len())
     };
 
     // Calculate available space for command (account for local_indicator)
@@ -480,11 +485,11 @@ fn display_process_group(group: &ProcessGroup) {
         display_command.bright_black()
     );
 
-    // Display all port:pid pairs on second line
+    // Display all port:pid pairs on second line in [pid]:port format
     let port_pid_strs: Vec<String> = group
         .port_pid_pairs
         .iter()
-        .map(|(port, pid)| format!(":{} {}", port, pid))
+        .map(|(port, pid)| format!("[{}]:{}", pid, port))
         .collect();
 
     println!("{}", port_pid_strs.join(", ").bright_black());
