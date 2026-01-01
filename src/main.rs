@@ -20,7 +20,7 @@ struct Cli {
     #[arg(short = 'n', long)]
     process: Option<String>,
 
-    /// Show all ports (default: only monitored ports)
+    /// Show all ports (default: only dev processes)
     #[arg(short, long)]
     all: bool,
 
@@ -63,6 +63,7 @@ struct GroupedPortInfo {
     command: String,
     start_time: String, // Most recent start time from the group
     is_local: bool,     // Whether this is a local address (127.0.0.1, 0.0.0.0, etc.)
+    dev_score: u32,     // Development process score
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +73,83 @@ struct ProcessGroup {
     command: String,
     start_time: String,
     is_local: bool, // Whether this group contains local addresses
+}
+
+// ============================================================================
+// Development Process Detection
+// ============================================================================
+//
+// Keywords and process names used to identify development servers.
+//
+
+/// Default development runtime processes
+const DEFAULT_DEV_PROCESSES: &[&str] = &[
+    "node", "python", "python3", "ruby", "php", "java", "go", "cargo", "rust-analyzer",
+    "deno", "bun", "ts-node", "tsx", "npx",
+];
+
+/// Default development tool keywords (matched against command line)
+const DEFAULT_DEV_KEYWORDS: &[&str] = &[
+    // Build tools & bundlers
+    "webpack", "vite", "esbuild", "rollup", "parcel", "turbopack",
+    // Frontend frameworks
+    "next", "nuxt", "remix", "gatsby", "astro", "svelte",
+    // Backend frameworks
+    "rails", "django", "flask", "fastapi", "express", "nestjs", "koa", "hono",
+    // Package managers & runners
+    "npm", "yarn", "pnpm", "bun",
+    // Common dev commands
+    "dev", "serve", "start", "watch", "hot-reload", "livereload",
+    // Other tools
+    "storybook", "prisma", "drizzle",
+];
+
+/// Minimum score threshold to be considered a dev process
+const DEV_SCORE_THRESHOLD: u32 = 30;
+
+/// Calculate development score for a process
+fn calc_dev_score(
+    process: &str,
+    command: &str,
+    port: u16,
+    address: &str,
+    dev_processes: &[String],
+    dev_keywords: &[String],
+) -> u32 {
+    let mut score = 0;
+    let process_lower = process.to_lowercase();
+    let command_lower = command.to_lowercase();
+
+    // Process name match (+30)
+    if dev_processes
+        .iter()
+        .any(|p| process_lower.contains(&p.to_lowercase()))
+    {
+        score += 30;
+    }
+
+    // Command line keyword match (+25)
+    if dev_keywords
+        .iter()
+        .any(|k| command_lower.contains(&k.to_lowercase()))
+    {
+        score += 25;
+    }
+
+    // Local address (+10)
+    if is_local_address(address) {
+        score += 10;
+    }
+
+    // Common dev port ranges (+15)
+    if matches!(
+        port,
+        3000..=3999 | 4000..=4999 | 5000..=5999 | 8000..=8999 | 9000..=9999
+    ) {
+        score += 15;
+    }
+
+    score
 }
 
 // ============================================================================
@@ -140,55 +218,35 @@ fn is_local_address(address: &str) -> bool {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
+    /// Process names that indicate development (e.g., "node", "python")
     #[serde(default)]
-    ports: Vec<PortEntry>,
+    dev_processes: Vec<String>,
+
+    /// Keywords in command line that indicate development (e.g., "webpack", "vite")
+    #[serde(default)]
+    dev_keywords: Vec<String>,
+
+    /// Minimum score to be considered a dev process (default: 30)
+    #[serde(default = "default_score_threshold")]
+    score_threshold: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PortEntry {
-    ports: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-impl PortEntry {
-    fn matches(&self, target: u16) -> bool {
-        // Support formats: "3000", "3000-3100", "3000,3001,3002", "3000-3010,4000,5000-5100"
-        for part in self.ports.split(',') {
-            let part = part.trim();
-            if let Some((start_str, end_str)) = part.split_once('-') {
-                // Range: "3000-3100"
-                if let (Ok(start), Ok(end)) = (
-                    start_str.trim().parse::<u16>(),
-                    end_str.trim().parse::<u16>(),
-                ) {
-                    if target >= start && target <= end {
-                        return true;
-                    }
-                }
-            } else if let Ok(single_port) = part.parse::<u16>() {
-                // Single port: "3000"
-                if target == single_port {
-                    return true;
-                }
-            }
-        }
-        false
-    }
+fn default_score_threshold() -> u32 {
+    DEV_SCORE_THRESHOLD
 }
 
 impl Default for Config {
     fn default() -> Self {
         const DEFAULT_CONFIG: &str = include_str!("../default-config.toml");
-        toml::from_str(DEFAULT_CONFIG).unwrap_or_else(|_| Self { ports: Vec::new() })
+        toml::from_str(DEFAULT_CONFIG).unwrap_or_else(|_| Self {
+            dev_processes: DEFAULT_DEV_PROCESSES.iter().map(|s| s.to_string()).collect(),
+            dev_keywords: DEFAULT_DEV_KEYWORDS.iter().map(|s| s.to_string()).collect(),
+            score_threshold: DEV_SCORE_THRESHOLD,
+        })
     }
 }
 
 impl Config {
-    fn is_monitored(&self, port_num: u16) -> bool {
-        self.ports.iter().any(|entry| entry.matches(port_num))
-    }
-
     fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
         if !config_path.exists() {
@@ -295,8 +353,6 @@ fn filter_port_infos(
     port_infos: Vec<PortInfo>,
     port_filter: Option<u16>,
     process_filter: Option<&str>,
-    all: bool,
-    config: &Config,
 ) -> Vec<PortInfo> {
     port_infos
         .into_iter()
@@ -319,12 +375,7 @@ fn filter_port_infos(
                 }
             }
 
-            // If not showing all, only show monitored ports
-            if !all {
-                config.is_monitored(info.port)
-            } else {
-                true
-            }
+            true
         })
         .collect()
 }
@@ -355,7 +406,7 @@ fn deduplicate_pids(infos: &[PortInfo]) -> Vec<String> {
         .collect()
 }
 
-fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
+fn group_by_port(port_infos: Vec<PortInfo>, config: &Config) -> Vec<GroupedPortInfo> {
     use std::collections::HashMap;
 
     let mut grouped: HashMap<u16, Vec<PortInfo>> = HashMap::new();
@@ -373,10 +424,19 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
                 .first()
                 .map(|i| i.start_time.clone())
                 .unwrap_or_default();
-            let is_local = infos
-                .first()
-                .map(|i| is_local_address(&i.address))
-                .unwrap_or(false);
+            let first = infos.first();
+            let is_local = first.map(|i| is_local_address(&i.address)).unwrap_or(false);
+            let address = first.map(|i| i.address.as_str()).unwrap_or("*");
+            let process = first.map(|i| i.process.as_str()).unwrap_or("");
+
+            let dev_score = calc_dev_score(
+                process,
+                &command,
+                port,
+                address,
+                &config.dev_processes,
+                &config.dev_keywords,
+            );
 
             GroupedPortInfo {
                 port,
@@ -385,6 +445,7 @@ fn group_by_port(port_infos: Vec<PortInfo>) -> Vec<GroupedPortInfo> {
                 command,
                 start_time,
                 is_local,
+                dev_score,
             }
         })
         .collect()
@@ -564,32 +625,29 @@ fn main() -> Result<()> {
     let config = Config::load()?;
     let port_infos = get_port_info()?;
 
-    let filtered = filter_port_infos(
-        port_infos,
-        cli.port,
-        cli.process.as_deref(),
-        cli.all,
-        &config,
-    );
+    let filtered = filter_port_infos(port_infos, cli.port, cli.process.as_deref());
 
     if filtered.is_empty() {
         println!("{}", "No ports found".yellow());
         return Ok(());
     }
 
-    let grouped = group_by_port(filtered);
+    let grouped = group_by_port(filtered, &config);
 
-    // Separate into categories: monitored, non-monitored
-    let (monitored, non_monitored): (Vec<_>, Vec<_>) = grouped
+    // Separate into categories: dev (score >= threshold), non-dev
+    let (dev_processes, non_dev): (Vec<_>, Vec<_>) = grouped
         .into_iter()
-        .partition(|info| config.is_monitored(info.port));
+        .partition(|info| info.dev_score >= config.score_threshold);
 
-    // Group all non-monitored by process name to detect multi-port processes
+    // If --all is not set, only show dev processes
+    let non_dev = if cli.all { non_dev } else { vec![] };
+
+    // Group non-dev by process name to detect multi-port processes
     let (mut others, mut multis, process_group_items): (Vec<_>, Vec<_>, Vec<_>) = {
         use std::collections::HashMap;
         let mut by_process: HashMap<String, Vec<GroupedPortInfo>> = HashMap::new();
 
-        for item in non_monitored {
+        for item in non_dev {
             let proc_name = item.processes.first().cloned().unwrap_or_default();
             by_process.entry(proc_name).or_default().push(item);
         }
@@ -618,7 +676,7 @@ fn main() -> Result<()> {
         (others, multis, process_groups)
     };
 
-    let mut monitored = monitored;
+    let mut dev_processes = dev_processes;
 
     // Group process_group_items by process name
     let mut process_groups = group_by_process(process_group_items);
@@ -626,13 +684,13 @@ fn main() -> Result<()> {
     // Apply sorting
     if cli.sort_recent {
         // Sort by start time (most recent first)
-        monitored.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        dev_processes.sort_by(|a, b| b.start_time.cmp(&a.start_time));
         others.sort_by(|a, b| b.start_time.cmp(&a.start_time));
         multis.sort_by(|a, b| b.start_time.cmp(&a.start_time));
         process_groups.sort_by(|a, b| b.start_time.cmp(&a.start_time));
     } else {
-        // Default: sort by port number (ascending) or process name
-        monitored.sort_by_key(|info| info.port);
+        // Default: sort by dev_score (descending), then port number
+        dev_processes.sort_by(|a, b| b.dev_score.cmp(&a.dev_score).then(a.port.cmp(&b.port)));
         others.sort_by_key(|info| info.port);
         multis.sort_by_key(|info| info.port);
         process_groups.sort_by_key(|g| g.process_name.clone());
@@ -640,18 +698,18 @@ fn main() -> Result<()> {
 
     // Apply limit
     let limit = if cli.limit > 0 { cli.limit } else { usize::MAX };
-    let monitored: Vec<_> = monitored.into_iter().take(limit).collect();
+    let dev_processes: Vec<_> = dev_processes.into_iter().take(limit).collect();
     let others: Vec<_> = others.into_iter().take(limit).collect();
     let multis: Vec<_> = multis.into_iter().take(limit).collect();
     let process_groups: Vec<_> = process_groups.into_iter().take(limit).collect();
 
-    let total_count = monitored.len() + others.len() + multis.len() + process_groups.len();
+    let total_count = dev_processes.len() + others.len() + multis.len() + process_groups.len();
     println!("\n{} port(s) detected:\n", total_count);
 
-    // Display monitored ports first
-    if !monitored.is_empty() {
-        println!("{}", "monitored".bright_blue().bold());
-        for info in &monitored {
+    // Display dev processes first
+    if !dev_processes.is_empty() {
+        println!("{}", "dev".bright_blue().bold());
+        for info in &dev_processes {
             display_grouped_port_info(info, false);
         }
         println!();
