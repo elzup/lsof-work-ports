@@ -84,24 +84,76 @@ struct ProcessGroup {
 
 /// Default development runtime processes
 const DEFAULT_DEV_PROCESSES: &[&str] = &[
-    "node", "python", "python3", "ruby", "php", "java", "go", "cargo", "rust-analyzer",
-    "deno", "bun", "ts-node", "tsx", "npx",
+    // JavaScript/TypeScript
+    "node", "deno", "bun", "ts-node", "tsx", "npx",
+    // Python
+    "python", "python3", "uvicorn", "gunicorn", "uwsgi", "hypercorn",
+    // Ruby
+    "ruby", "puma", "unicorn", "thin", "passenger",
+    // PHP
+    "php", "php-fpm",
+    // Java/JVM
+    "java", "kotlin", "scala", "gradle", "mvn",
+    // Go
+    "go",
+    // Rust
+    "cargo", "rust-analyzer", "rustc",
+    // .NET
+    "dotnet",
+    // Elixir/Erlang
+    "elixir", "erl", "beam", "mix", "iex",
+    // Other languages
+    "lua", "luajit", "perl", "R", "Rscript", "julia",
 ];
 
 /// Default development tool keywords (matched against command line)
 const DEFAULT_DEV_KEYWORDS: &[&str] = &[
     // Build tools & bundlers
     "webpack", "vite", "esbuild", "rollup", "parcel", "turbopack",
+    "gulp", "grunt", "snowpack", "wmr",
     // Frontend frameworks
-    "next", "nuxt", "remix", "gatsby", "astro", "svelte",
-    // Backend frameworks
-    "rails", "django", "flask", "fastapi", "express", "nestjs", "koa", "hono",
+    "next", "nuxt", "remix", "gatsby", "astro", "svelte", "angular", "vue", "react",
+    "solid", "qwik", "fresh",
+    // Backend frameworks (Node.js)
+    "express", "nestjs", "koa", "hono", "fastify", "restify", "hapi", "polka",
+    // Backend frameworks (Python)
+    "django", "flask", "fastapi", "starlette", "sanic", "tornado", "aiohttp",
+    // Backend frameworks (Ruby)
+    "rails", "sinatra", "hanami", "roda",
+    // Backend frameworks (PHP)
+    "laravel", "symfony", "artisan",
+    // Backend frameworks (Go)
+    "gin", "echo", "fiber", "chi", "mux",
+    // Backend frameworks (Rust)
+    "actix", "axum", "rocket", "warp",
+    // Backend frameworks (Java)
+    "spring", "quarkus", "micronaut",
+    // Backend frameworks (Elixir)
+    "phoenix", "plug",
     // Package managers & runners
-    "npm", "yarn", "pnpm", "bun",
+    "npm", "yarn", "pnpm", "pip", "poetry", "pdm", "uv",
+    "bundle", "gem", "composer", "mix",
     // Common dev commands
-    "dev", "serve", "start", "watch", "hot-reload", "livereload",
-    // Other tools
-    "storybook", "prisma", "drizzle",
+    "dev", "serve", "start", "watch", "hot-reload", "livereload", "run",
+    // Testing
+    "jest", "vitest", "playwright", "cypress", "mocha", "pytest", "rspec",
+    // Database tools
+    "prisma", "drizzle", "typeorm", "sequelize", "knex",
+    // Other dev tools
+    "storybook", "docusaurus", "vuepress", "vitepress",
+];
+
+/// Default processes to exclude from dev detection
+const DEFAULT_EXCLUDE_PROCESSES: &[&str] = &[
+    // IDE/Editor helpers (they listen on ports but aren't dev servers)
+    "Code Helper",
+    "Electron Helper",
+    "Chrome Helper",
+    "Chromium Helper",
+    // System processes
+    "Dropbox",
+    "OneDrive",
+    "Creative Cloud",
 ];
 
 /// Minimum score threshold to be considered a dev process
@@ -115,10 +167,20 @@ fn calc_dev_score(
     address: &str,
     dev_processes: &[String],
     dev_keywords: &[String],
+    exclude_processes: &[String],
 ) -> u32 {
-    let mut score = 0;
     let process_lower = process.to_lowercase();
     let command_lower = command.to_lowercase();
+
+    // Check exclusion list first (matches process name or command)
+    if exclude_processes.iter().any(|e| {
+        let e_lower = e.to_lowercase();
+        process_lower.contains(&e_lower) || command_lower.contains(&e_lower)
+    }) {
+        return 0;
+    }
+
+    let mut score = 0;
 
     // Process name match (+30)
     if dev_processes
@@ -163,7 +225,7 @@ fn calc_dev_score(
 /// Display format configuration constants
 mod display_config {
     /// Width of the process name column (in characters)
-    pub const PROCESS_WIDTH: usize = 30;
+    pub const PROCESS_WIDTH: usize = 20;
 
     /// Indicator shown for local addresses (127.0.0.1, 0.0.0.0, localhost, etc.)
     pub const LOCAL_INDICATOR_LOCAL: &str = "L ";
@@ -175,30 +237,31 @@ mod display_config {
 /// Format a single PID:port pair
 ///
 /// Returns: `[pid]:port` format (e.g., `[12345]:3000`)
-fn format_pid_port(pid: &str, port: u16) -> String {
+fn format_pid(pid: &str) -> String {
+    format!("[{pid}]")
+}
+
+/// Format PID with port (for process groups with multiple ports)
+fn format_pid_with_port(pid: &str, port: u16) -> String {
     format!("[{pid}]:{port}")
 }
 
-/// Format multiple PID:port pairs with optional truncation
+/// Format multiple PIDs with optional truncation
 ///
 /// # Arguments
 /// * `pids` - List of process IDs
-/// * `port` - Port number
-/// * `max_display` - Maximum number of pairs to display (None for all)
+/// * `max_display` - Maximum number of PIDs to display (None for all)
 ///
 /// # Returns
-/// Comma-separated list of `[pid]:port` pairs with truncation if needed
-fn format_pid_port_list(pids: &[String], port: u16, max_display: Option<usize>) -> String {
+/// Comma-separated list of `[pid]` with truncation if needed
+fn format_pid_list(pids: &[String], max_display: Option<usize>) -> String {
     match max_display {
         Some(max) if pids.len() > max => {
-            let pairs: Vec<String> = pids[..max]
-                .iter()
-                .map(|pid| format_pid_port(pid, port))
-                .collect();
+            let pairs: Vec<String> = pids[..max].iter().map(|pid| format_pid(pid)).collect();
             format!("{}, ... (x{})", pairs.join(", "), pids.len())
         }
         _ => {
-            let pairs: Vec<String> = pids.iter().map(|pid| format_pid_port(pid, port)).collect();
+            let pairs: Vec<String> = pids.iter().map(|pid| format_pid(pid)).collect();
             pairs.join(", ")
         }
     }
@@ -226,6 +289,10 @@ struct Config {
     #[serde(default)]
     dev_keywords: Vec<String>,
 
+    /// Process names to exclude from dev detection (e.g., "Code Helper")
+    #[serde(default)]
+    exclude_processes: Vec<String>,
+
     /// Minimum score to be considered a dev process (default: 30)
     #[serde(default = "default_score_threshold")]
     score_threshold: u32,
@@ -241,6 +308,7 @@ impl Default for Config {
         toml::from_str(DEFAULT_CONFIG).unwrap_or_else(|_| Self {
             dev_processes: DEFAULT_DEV_PROCESSES.iter().map(|s| s.to_string()).collect(),
             dev_keywords: DEFAULT_DEV_KEYWORDS.iter().map(|s| s.to_string()).collect(),
+            exclude_processes: DEFAULT_EXCLUDE_PROCESSES.iter().map(|s| s.to_string()).collect(),
             score_threshold: DEV_SCORE_THRESHOLD,
         })
     }
@@ -441,6 +509,7 @@ fn group_by_port(port_infos: Vec<PortInfo>, config: &Config) -> Vec<GroupedPortI
                 address,
                 &config.dev_processes,
                 &config.dev_keywords,
+                &config.exclude_processes,
             );
 
             GroupedPortInfo {
@@ -523,11 +592,11 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
         format!("{:<width$}", count_str, width = PROCESS_WIDTH)
     };
 
-    // PID display in [pid]:port format - limit to first 3 PIDs if too many
+    // PID display - limit to first 3 PIDs if too many
     let pid_display = if info.pids.len() <= 3 {
-        format_pid_port_list(&info.pids, info.port, None)
+        format_pid_list(&info.pids, None)
     } else {
-        format_pid_port_list(&info.pids, info.port, Some(2))
+        format_pid_list(&info.pids, Some(2))
     };
 
     // Calculate available space for command (account for local_indicator)
@@ -553,15 +622,11 @@ fn display_grouped_port_info(info: &GroupedPortInfo, show_multi_line: bool) {
 
     // Multi-line display for processes with multiple PIDs
     if show_multi_line && info.pids.len() > 1 {
-        // Create port:pid pairs for all PIDs
-        let port_pid_pairs: Vec<String> = info
-            .pids
-            .iter()
-            .map(|pid| format_pid_port(pid, info.port))
-            .collect();
+        // Create PID list for all PIDs
+        let pid_list: Vec<String> = info.pids.iter().map(|pid| format_pid(pid)).collect();
 
-        // Display all port:pid pairs on second line
-        println!("{}", port_pid_pairs.join(", ").bright_black());
+        // Display all PIDs on second line
+        println!("{}", pid_list.join(", ").bright_black());
     }
 }
 
@@ -611,7 +676,7 @@ fn display_process_group(group: &ProcessGroup) {
     let port_pid_strs: Vec<String> = group
         .port_pid_pairs
         .iter()
-        .map(|(port, pid)| format_pid_port(pid, *port))
+        .map(|(port, pid)| format_pid_with_port(pid, *port))
         .collect();
 
     println!("{}", port_pid_strs.join(", ").bright_black());

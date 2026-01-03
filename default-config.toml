@@ -3,7 +3,7 @@
 
 # Process names that indicate development servers
 dev_processes = [
-    # JavaScript/TypeScript runtimes
+    # JavaScript/TypeScript
     "node",
     "deno",
     "bun",
@@ -15,19 +15,44 @@ dev_processes = [
     "python3",
     "uvicorn",
     "gunicorn",
+    "uwsgi",
+    "hypercorn",
     # Ruby
     "ruby",
     "puma",
     "unicorn",
+    "thin",
+    "passenger",
     # PHP
     "php",
+    "php-fpm",
     # Java/JVM
     "java",
+    "kotlin",
+    "scala",
+    "gradle",
+    "mvn",
     # Go
     "go",
     # Rust
     "cargo",
     "rust-analyzer",
+    "rustc",
+    # .NET
+    "dotnet",
+    # Elixir/Erlang
+    "elixir",
+    "erl",
+    "beam",
+    "mix",
+    "iex",
+    # Other languages
+    "lua",
+    "luajit",
+    "perl",
+    "R",
+    "Rscript",
+    "julia",
 ]
 
 # Keywords in command line that indicate development
@@ -39,6 +64,10 @@ dev_keywords = [
     "rollup",
     "parcel",
     "turbopack",
+    "gulp",
+    "grunt",
+    "snowpack",
+    "wmr",
     # Frontend frameworks
     "next",
     "nuxt",
@@ -47,21 +76,66 @@ dev_keywords = [
     "astro",
     "svelte",
     "angular",
-    # Backend frameworks
-    "rails",
-    "django",
-    "flask",
-    "fastapi",
+    "vue",
+    "react",
+    "solid",
+    "qwik",
+    "fresh",
+    # Backend frameworks (Node.js)
     "express",
     "nestjs",
     "koa",
     "hono",
+    "fastify",
+    "restify",
+    "hapi",
+    "polka",
+    # Backend frameworks (Python)
+    "django",
+    "flask",
+    "fastapi",
+    "starlette",
+    "sanic",
+    "tornado",
+    "aiohttp",
+    # Backend frameworks (Ruby)
+    "rails",
+    "sinatra",
+    "hanami",
+    "roda",
+    # Backend frameworks (PHP)
+    "laravel",
+    "symfony",
+    "artisan",
+    # Backend frameworks (Go)
     "gin",
     "echo",
+    "fiber",
+    "chi",
+    "mux",
+    # Backend frameworks (Rust)
+    "actix",
+    "axum",
+    "rocket",
+    "warp",
+    # Backend frameworks (Java)
+    "spring",
+    "quarkus",
+    "micronaut",
+    # Backend frameworks (Elixir)
+    "phoenix",
+    "plug",
     # Package managers & runners
     "npm",
     "yarn",
     "pnpm",
+    "pip",
+    "poetry",
+    "pdm",
+    "uv",
+    "bundle",
+    "gem",
+    "composer",
     # Common dev commands
     "dev",
     "serve",
@@ -69,14 +143,40 @@ dev_keywords = [
     "watch",
     "hot-reload",
     "livereload",
+    "run",
+    # Testing
+    "jest",
+    "vitest",
+    "playwright",
+    "cypress",
+    "mocha",
+    "pytest",
+    "rspec",
     # Database tools
     "prisma",
     "drizzle",
-    # Other tools
+    "typeorm",
+    "sequelize",
+    "knex",
+    # Other dev tools
     "storybook",
-    "vitest",
-    "jest",
-    "playwright",
+    "docusaurus",
+    "vuepress",
+    "vitepress",
+]
+
+# Process names to exclude from dev detection
+# These match against process name OR command line
+exclude_processes = [
+    # IDE/Editor helpers (they listen on ports but aren't dev servers)
+    "Code Helper",
+    "Electron Helper",
+    "Chrome Helper",
+    "Chromium Helper",
+    # System processes
+    "Dropbox",
+    "OneDrive",
+    "Creative Cloud",
 ]
 
 # Minimum score to be considered a dev process
