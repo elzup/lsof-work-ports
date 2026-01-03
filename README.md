@@ -1,17 +1,19 @@
 # lsof-work-ports
 
-A Rust program to manage and monitor ports occupied by processes. Quickly discover which processes are using which ports.
+A Rust CLI tool to discover and monitor development server ports. Automatically detects dev processes based on process names and command-line keywords.
 
 ## Features
 
 - Wraps `lsof` command to display port usage in a clean format
-- Monitors common development ports (3000, 8080, 5173, etc.) by default
+- **Auto-detects development processes** using a scoring system:
+  - Process name matching (node, python, ruby, etc.)
+  - Command-line keyword matching (webpack, vite, next, etc.)
+  - Local address detection
+  - Common dev port ranges (3000-9999)
 - Filter by port number or process name
-- Customizable port monitoring via config file
-- Supports flexible port specifications: single ports, ranges, comma-separated, and mixed formats
+- Customizable detection via config file
 - Groups multiple processes on the same port
-- Sorting options: by port number or recent activity
-- Configurable display limit
+- Sorting options: by score, port number, or recent activity
 
 ## Installation
 
@@ -30,7 +32,7 @@ cargo build --release
 
 ### Basic usage
 
-By default, shows only monitored ports from config:
+By default, shows only detected dev processes:
 
 ```bash
 lsof-work-ports
@@ -79,72 +81,66 @@ Config file will be created at `~/.config/lsof-work-ports/config.toml`.
 Example config file (`~/.config/lsof-work-ports/config.toml`):
 
 ```toml
-# Single port
-[[ports]]
-ports = "3000"
-name = "My React App"
+# Process names that indicate development servers
+dev_processes = [
+    "node",
+    "python",
+    "ruby",
+    "php",
+    "go",
+    "cargo",
+]
 
-# Port range
-[[ports]]
-ports = "3000-3100"
-name = "Frontend Dev Servers"
+# Keywords in command line that indicate development
+dev_keywords = [
+    "webpack",
+    "vite",
+    "next",
+    "dev",
+    "serve",
+    "start",
+]
 
-# Comma-separated ports
-[[ports]]
-ports = "6000,6001,6002"
-name = "Cache Servers"
-
-# Mixed format
-[[ports]]
-ports = "7000-7010,7777,8888,9000-9010"
-name = "Mixed Ports"
-
-# Name is optional
-[[ports]]
-ports = "4000"
+# Minimum score to be considered a dev process (default: 30)
+score_threshold = 30
 ```
 
-### Port specification formats
+### Scoring System
 
-- **Single port**: `"3000"`
-- **Range**: `"3000-3100"`
-- **Comma-separated**: `"6000,6001,6002"`
-- **Mixed**: `"7000-7010,7777,8888,9000-9010"`
+Each process is scored based on multiple factors:
 
-If no config file exists, default settings will be used.
+| Factor | Score |
+|--------|-------|
+| Process name match (node, python, etc.) | +30 |
+| Command keyword match (webpack, vite, etc.) | +25 |
+| Local address (127.0.0.1, 0.0.0.0) | +10 |
+| Dev port range (3000-9999) | +15 |
 
-### Default monitored ports
-
-- **Frontend**
-  - 3000: React Dev Server
-  - 3001: Next.js Dev
-  - 5173: Vite Dev Server
-
-- **Backend**
-  - 4000: API Server
-  - 8000: HTTP Server Alt
-  - 8080: HTTP Server
-
-- **Database**
-  - 3306: MySQL
-  - 5432: PostgreSQL
-  - 27017: MongoDB
-
-- **Cache**
-  - 6379: Redis
+Processes with score >= `score_threshold` are shown in the `dev` section.
 
 ## Output example
 
 ```
-5 port(s) detected:
+20 port(s) detected:
 
-:3000  ruby                 (PID: 7894)   puma 3.12.6 (tcp://0.0.0.0:3000)
-:5000  ControlCe, ... (x2)  (PIDs: 94528) /System/Library/CoreServices/ControlCenter
-:5353  Opera, ... (x24)     (PIDs: 28951, 98294, ... x2) /Applications/Opera.app
+dev
+L :62267 php                            [91310]:62267  PHP Language Server
+  :53852 node                           [18186]:53852  next-server (v15.5.7)
+L :3000  node                           [12345]:3000   vite dev server
 
-:3306  MySQLWork            (PID: 43260)  /Applications/MySQLWorkbench.app
-:6379  com.docke            (PID: 9340)   /Applications/Docker.app/Contents/MacOS
+others
+L :3306  MySQLWork                      [8207]:3306  /Applications/MySQLWorkbench
+  :80    nginx                          [1234]:80    nginx: master process
+
+process_groups
+L Dropbox                        (x2 ports)  /Applications/Dropbox.app
+[84278]:17600, [84278]:17603
 ```
+
+- `L` prefix indicates local address (127.0.0.1, 0.0.0.0, etc.)
+- `dev` section: Detected development processes (score >= threshold)
+- `others` section: Non-dev processes (shown with `--all`)
+- `process_groups` section: Processes using multiple ports
 
 ## Development
 
