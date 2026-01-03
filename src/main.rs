@@ -291,6 +291,11 @@ fn get_port_info() -> Result<Vec<PortInfo>> {
         .lines()
         .skip(1)
         .filter_map(|line| {
+            // Only include LISTEN state (skip ESTABLISHED, etc.)
+            if !line.contains("(LISTEN)") {
+                return None;
+            }
+
             let parts: Vec<_> = line.split_whitespace().collect();
             if parts.len() < 9 {
                 return None;
